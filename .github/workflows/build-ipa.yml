@@ -1,0 +1,73 @@
+name: Build IPA for SideStore (Check Verde ✅)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Expo Prebuild
+        run: |
+          rm -rf ios android
+          npx expo prebuild --platform ios --clean --no-install --non-interactive
+
+      - name: Fix Node Path for Xcode
+        run: |
+          sudo ln -s $(which node) /usr/local/bin/node || true
+          echo "export NODE_BINARY=$(which node)" > ios/.xcode.env
+          echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
+
+      - name: Install Pods
+        run: |
+          cd ios
+          pod install
+          cd ..
+
+      - name: Build IPA
+        run: |
+          mkdir -p build
+          cd ios
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          export NODE_BINARY=$(which node)
+          
+          xcodebuild archive \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath ../build/App.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_METHOD=manual \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1
+          
+          cd ..
+
+          mkdir -p build/Payload
+          cp -r build/App.xcarchive/Products/Applications/*.app build/Payload/
+          cd build
+          zip -r ../App.ipa Payload
+          cd ..
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-ipa
+          path: App.ipa
+          retention-days: 1
